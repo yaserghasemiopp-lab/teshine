@@ -1,4 +1,3 @@
-```kotlin
 package com.ashrafi
 
 import android.annotation.SuppressLint
@@ -245,7 +244,6 @@ class MainActivity : ComponentActivity() {
             allowFileAccessFromFileURLs = false
 
             setSupportMultipleWindows(false)
-
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
@@ -732,4 +730,3 @@ fun OfflineBanner() {
         }
     }
 }
-```
