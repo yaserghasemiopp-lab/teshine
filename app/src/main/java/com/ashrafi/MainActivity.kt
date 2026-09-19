@@ -536,7 +536,7 @@ fun SplashScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(creamColor),
+            .background(Color.White),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -557,7 +557,7 @@ fun SplashScreen(
             )
 
             CircularProgressIndicator(
-                color = brownColor,
+                color = Color.Black,
                 strokeWidth = 3.dp
             )
 
@@ -567,7 +567,7 @@ fun SplashScreen(
 
             Text(
                 text = "در حال بارگذاری...",
-                color = brownColor,
+                color = Color.Black,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )
