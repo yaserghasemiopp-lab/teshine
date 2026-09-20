@@ -1,5 +1,6 @@
 package com.ashrafi
 
+import ir.teshine.app.R
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
@@ -86,11 +87,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // رنگ نوار وضعیت بالای گوشی
         window.statusBarColor =
             android.graphics.Color.parseColor(STATUS_BAR_COLOR)
 
-        // سفید بودن ساعت، آنتن و باتری
         WindowInsetsControllerCompat(
             window,
             window.decorView
