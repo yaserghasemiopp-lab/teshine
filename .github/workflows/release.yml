@@ -1,0 +1,45 @@
+name: Build Teshine Release APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Grant permission
+        run: chmod +x gradlew
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.TESHINE_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > teshine-release.jks
+
+      - name: Build Release APK
+        env:
+          TESHINE_KEYSTORE_PATH: ${{ github.workspace }}/teshine-release.jks
+          TESHINE_KEYSTORE_PASSWORD: ${{ secrets.TESHINE_KEYSTORE_PASSWORD }}
+          TESHINE_KEY_ALIAS: teshine
+          TESHINE_KEY_PASSWORD: ${{ secrets.TESHINE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Teshine-release
+          path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Delete temporary keystore
+        if: always()
+        run: rm -f teshine-release.jks
