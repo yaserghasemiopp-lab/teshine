@@ -1,6 +1,5 @@
-package com.ashrafi
+package ir.teshine.app
 
-import ir.teshine.app.R
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
