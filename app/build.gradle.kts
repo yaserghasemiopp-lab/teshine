@@ -20,9 +20,26 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("TESHINE_KEYSTORE_PATH")
+            val keystorePassword = System.getenv("TESHINE_KEYSTORE_PASSWORD")
+            val keyAlias = System.getenv("TESHINE_KEY_ALIAS")
+            val keyPassword = System.getenv("TESHINE_KEY_PASSWORD")
+
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
