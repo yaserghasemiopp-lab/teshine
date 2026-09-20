@@ -32,16 +32,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.TESHINE_KEY_PASSWORD }}
         run: |
           keytool -list \
-            -keystore teshine-release.jks \
-            -storepass "$STORE_PASSWORD" \
-            -alias teshine
-
-          keytool -keypasswd \
+            -v \
             -keystore teshine-release.jks \
             -storepass "$STORE_PASSWORD" \
             -alias teshine \
-            -keypass "$KEY_PASSWORD" \
-            -new "$KEY_PASSWORD"
+            -keypass "$KEY_PASSWORD"
 
       - name: Build Release APK
         env:
