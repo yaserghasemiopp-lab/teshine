@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "ir.teshine.app"
+    namespace = "com.ashrafi"
 
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "ir.teshine.app"
+        applicationId = "com.ashrafi"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
