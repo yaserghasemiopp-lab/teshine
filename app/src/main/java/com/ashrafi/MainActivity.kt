@@ -34,15 +34,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,137 +64,715 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.delay
 
-private const val SITE_HOST = "teshine.ir"
-private const val HOME_URL = "https://teshine.ir"
-
-private val creamColor = Color(0xFFF5E6D3)
-private val brownColor = Color(0xFF8D6E63)
-private val greenColor = Color(0xFF0EAD69)
-
 class MainActivity : ComponentActivity() {
 
     private var webView: WebView? = null
-    private var lastBackPressTime = 0L
-    private var isNetworkAvailable = true
+    private var lastBackPressTime: Long = 0
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    private lateinit var connectivityManager: ConnectivityManager
-    private lateinit var networkCallback: ConnectivityManager.NetworkCallback
+    private val isNetworkAvailable = mutableStateOf(false)
 
+    companion object {
+        private const val SITE_HOST = "teshine.ir"
+        private const val HOME_URL = "https://teshine.ir"
+        private const val RETRY_INTERVAL_SECONDS = 30
+        private const val DOUBLE_BACK_EXIT_TIME = 2000L
+        private const val MAX_PREFETCH_LINKS = 6
+
+        private const val STATUS_BAR_COLOR = "#0EAD69"
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // رنگ نوار بالای گوشی
-        window.statusBarColor = android.graphics.Color.rgb(14, 173, 105)
+        // رنگ نوار وضعیت بالای گوشی
+        window.statusBarColor =
+            android.graphics.Color.parseColor(STATUS_BAR_COLOR)
 
-        // آیکون‌ها و ساعت سفید
-        WindowInsetsControllerCompat(window, window.decorView)
-            .isAppearanceLightStatusBars = false
+        // سفید بودن ساعت، آنتن و باتری
+        WindowInsetsControllerCompat(
+            window,
+            window.decorView
+        ).isAppearanceLightStatusBars = false
 
-        connectivityManager =
-            getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        setupBackPressHandler()
+        registerNetworkCallback()
 
-        isNetworkAvailable = checkNetwork()
-
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
-
-            override fun onAvailable(network: Network) {
-                runOnUiThread {
-                    isNetworkAvailable = true
-                }
-            }
-
-            override fun onLost(network: Network) {
-                runOnUiThread {
-                    isNetworkAvailable = checkNetwork()
-                }
-            }
-
-            override fun onCapabilitiesChanged(
-                network: Network,
-                networkCapabilities: NetworkCapabilities
-            ) {
-                runOnUiThread {
-                    isNetworkAvailable =
-                        networkCapabilities.hasCapability(
-                            NetworkCapabilities.NET_CAPABILITY_INTERNET
-                        )
-                }
-            }
-        }
-
-        try {
-            val request = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build()
-
-            connectivityManager.registerNetworkCallback(
-                request,
-                networkCallback
-            )
-        } catch (_: Exception) {
-        }
+        isNetworkAvailable.value = isOnline()
 
         setContent {
-            MaterialTheme {
-                CompositionRoot()
+
+            val networkAvailable by isNetworkAvailable
+
+            var isLoading by remember {
+                mutableStateOf(true)
+            }
+
+            var isFirstLoad by remember {
+                mutableStateOf(true)
+            }
+
+            var hasHardError by remember {
+                mutableStateOf(false)
+            }
+
+            var showOfflineBanner by remember {
+                mutableStateOf(false)
+            }
+
+            var retryAttempt by remember {
+                mutableIntStateOf(0)
+            }
+
+            var retryCountdown by remember {
+                mutableIntStateOf(RETRY_INTERVAL_SECONDS)
+            }
+
+            val creamColor = Color(0xFFF5E6D3)
+            val brownColor = Color(0xFF8D6E63)
+
+            LaunchedEffect(networkAvailable) {
+
+                if (
+                    networkAvailable &&
+                    showOfflineBanner
+                ) {
+                    showOfflineBanner = false
+                    isLoading = true
+
+                    webView?.settings?.cacheMode =
+                        WebSettings.LOAD_DEFAULT
+
+                    webView?.reload()
+                }
+            }
+
+            LaunchedEffect(Unit) {
+
+                delay(2000L)
+
+                isFirstLoad = false
+            }
+
+            LaunchedEffect(
+                hasHardError,
+                retryAttempt
+            ) {
+
+                if (hasHardError) {
+
+                    retryCountdown =
+                        RETRY_INTERVAL_SECONDS
+
+                    while (retryCountdown > 0) {
+
+                        delay(1000L)
+
+                        retryCountdown--
+                    }
+
+                    if (isOnline()) {
+
+                        hasHardError = false
+                        isLoading = true
+
+                        webView?.settings?.cacheMode =
+                            WebSettings.LOAD_DEFAULT
+
+                        webView?.reload()
+
+                    } else {
+
+                        retryAttempt++
+                    }
+                }
+            }
+
+            CompositionLocalProvider(
+                LocalLayoutDirection provides LayoutDirection.Rtl
+            ) {
+
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+
+                    AndroidView(
+                        factory = { context ->
+
+                            WebView(context).apply {
+
+                                webView = this
+
+                                setupWebView(
+                                    webView = this,
+
+                                    onLoadingChanged = {
+                                        isLoading = it
+                                    },
+
+                                    onHardError = {
+                                        hasHardError = true
+                                        isLoading = false
+                                    },
+
+                                    onCacheLoadedOffline = {
+                                        showOfflineBanner = true
+                                    },
+
+                                    onFirstLoadComplete = {
+                                        isFirstLoad = false
+                                    }
+                                )
+
+                                if (
+                                    savedInstanceState != null
+                                ) {
+
+                                    val restored =
+                                        restoreState(
+                                            savedInstanceState
+                                        )
+
+                                    if (restored == null) {
+                                        loadUrl(HOME_URL)
+                                    }
+
+                                } else {
+
+                                    loadUrl(HOME_URL)
+                                }
+                            }
+                        },
+
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    if (
+                        isLoading &&
+                        !isFirstLoad &&
+                        !hasHardError
+                    ) {
+
+                        androidx.compose.material3.LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopCenter)
+                                .height(3.dp),
+
+                            color = brownColor,
+
+                            trackColor = creamColor
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible =
+                            isLoading &&
+                            isFirstLoad &&
+                            !hasHardError,
+
+                        enter = fadeIn(),
+
+                        exit = fadeOut()
+                    ) {
+
+                        SplashScreen()
+                    }
+
+                    AnimatedVisibility(
+                        visible = hasHardError,
+
+                        enter = fadeIn(),
+
+                        exit = fadeOut()
+                    ) {
+
+                        OfflineScreen(
+                            countdown = retryCountdown,
+
+                            creamColor = creamColor,
+
+                            brownColor = brownColor,
+
+                            onRetry = {
+
+                                if (isOnline()) {
+
+                                    hasHardError = false
+                                    isLoading = true
+
+                                    webView?.settings?.cacheMode =
+                                        WebSettings.LOAD_DEFAULT
+
+                                    webView?.reload()
+
+                                } else {
+
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "اینترنت در دسترس نیست",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible =
+                            showOfflineBanner &&
+                            !hasHardError,
+
+                        modifier =
+                            Modifier.align(
+                                Alignment.TopCenter
+                            ),
+
+                        enter =
+                            slideInVertically {
+                                -it
+                            },
+
+                        exit =
+                            slideOutVertically {
+                                -it
+                            }
+                    ) {
+
+                        OfflineBanner()
+                    }
+                }
             }
         }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebView(
+        webView: WebView,
+        onLoadingChanged: (Boolean) -> Unit,
+        onHardError: () -> Unit,
+        onCacheLoadedOffline: () -> Unit,
+        onFirstLoadComplete: () -> Unit
+    ) {
+
+        var isFirstPageLoad = true
+
+        val online = isOnline()
+
+        webView.settings.apply {
+
+            javaScriptEnabled = true
+
+            domStorageEnabled = true
+
+            databaseEnabled = true
+
+            loadsImagesAutomatically = true
+
+            allowContentAccess = true
+
+            allowFileAccess = true
+
+            @Suppress("DEPRECATION")
+            allowFileAccessFromFileURLs = false
+
+            setSupportMultipleWindows(false)
+
+            setSupportZoom(false)
+
+            builtInZoomControls = false
+
+            displayZoomControls = false
+
+            useWideViewPort = true
+
+            loadWithOverviewMode = true
+
+            mixedContentMode =
+                WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+            mediaPlaybackRequiresUserGesture = false
+
+            cacheMode =
+                if (online) {
+                    WebSettings.LOAD_DEFAULT
+                } else {
+                    WebSettings.LOAD_CACHE_ELSE_NETWORK
+                }
+
+            userAgentString =
+                "$userAgentString TeshineApp/1.0"
+        }
+
+        webView.setOnLongClickListener {
+            true
+        }
+
+        webView.isLongClickable = false
+
+        webView.webViewClient =
+            object : WebViewClient() {
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+
+                    val url =
+                        request?.url
+                            ?: return false
+
+                    val host =
+                        url.host
+                            ?: return false
+
+                    return if (
+                        host == SITE_HOST ||
+                        host == "www.$SITE_HOST" ||
+                        host.endsWith(".$SITE_HOST")
+                    ) {
+
+                        false
+
+                    } else {
+
+                        try {
+
+                            startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    url
+                                )
+                            )
+
+                        } catch (_: Exception) {
+                        }
+
+                        true
+                    }
+                }
+
+                override fun onPageStarted(
+                    view: WebView?,
+                    url: String?,
+                    favicon: Bitmap?
+                ) {
+
+                    onLoadingChanged(true)
+
+                    view?.settings?.cacheMode =
+                        if (isOnline()) {
+                            WebSettings.LOAD_DEFAULT
+                        } else {
+                            WebSettings.LOAD_CACHE_ELSE_NETWORK
+                        }
+                }
+
+                override fun onPageFinished(
+                    view: WebView?,
+                    url: String?
+                ) {
+
+                    onLoadingChanged(false)
+
+                    if (!isOnline()) {
+                        onCacheLoadedOffline()
+                    }
+
+                    if (isFirstPageLoad) {
+
+                        isFirstPageLoad = false
+
+                        onFirstLoadComplete()
+                    }
+
+                    injectPrefetchScript(view)
+
+                    disableTextSelection(view)
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?
+                ) {
+
+                    if (
+                        request?.isForMainFrame == true &&
+                        (
+                            error?.errorCode ==
+                                WebViewClient.ERROR_HOST_LOOKUP ||
+
+                            error?.errorCode ==
+                                WebViewClient.ERROR_CONNECT ||
+
+                            error?.errorCode ==
+                                WebViewClient.ERROR_TIMEOUT
+                        )
+                    ) {
+
+                        onHardError()
+                    }
+                }
+            }
+    }
+
+    private fun disableTextSelection(
+        view: WebView?
+    ) {
+
+        view?.evaluateJavascript(
+            """
+            (function() {
+                var style = document.createElement('style');
+
+                style.textContent =
+                    '* { -webkit-user-select: none !important; user-select: none !important; }';
+
+                document.head?.appendChild(style);
+            })();
+            """.trimIndent(),
+
+            null
+        )
+    }
+
+    private fun setupBackPressHandler() {
 
         onBackPressedDispatcher.addCallback(
             this,
+
             object : OnBackPressedCallback(true) {
+
                 override fun handleOnBackPressed() {
 
-                    val currentWebView = webView
+                    val wv = webView
 
-                    if (currentWebView != null && currentWebView.canGoBack()) {
-                        currentWebView.goBack()
-                        return
-                    }
+                    if (
+                        wv != null &&
+                        wv.canGoBack() &&
+                        wv.url != HOME_URL
+                    ) {
 
-                    val currentTime = System.currentTimeMillis()
+                        wv.goBack()
 
-                    if (currentTime - lastBackPressTime < 2000) {
-                        finish()
                     } else {
-                        lastBackPressTime = currentTime
-                        Toast.makeText(
-                            this@MainActivity,
-                            "برای خروج دوباره دکمه بازگشت را بزنید",
-                            Toast.LENGTH_SHORT
-                        ).show()
+
+                        val now =
+                            System.currentTimeMillis()
+
+                        if (
+                            now - lastBackPressTime <
+                            DOUBLE_BACK_EXIT_TIME
+                        ) {
+
+                            finish()
+
+                        } else {
+
+                            lastBackPressTime = now
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "برای خروج دوباره بازگشت را بزنید",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 }
             }
         )
     }
 
-    private fun checkNetwork(): Boolean {
-        return try {
-            val network = connectivityManager.activeNetwork
-            val capabilities =
-                connectivityManager.getNetworkCapabilities(network)
+    private fun registerNetworkCallback() {
 
-            capabilities?.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_INTERNET
-            ) == true
-        } catch (_: Exception) {
-            false
-        }
+        val cm =
+            getSystemService(
+                CONNECTIVITY_SERVICE
+            ) as ConnectivityManager
+
+        val request =
+            NetworkRequest.Builder()
+                .addCapability(
+                    NetworkCapabilities.NET_CAPABILITY_INTERNET
+                )
+                .build()
+
+        networkCallback =
+            object :
+                ConnectivityManager.NetworkCallback() {
+
+                override fun onAvailable(
+                    network: Network
+                ) {
+
+                    isNetworkAvailable.value =
+                        true
+                }
+
+                override fun onLost(
+                    network: Network
+                ) {
+
+                    isNetworkAvailable.value =
+                        false
+                }
+
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities:
+                    NetworkCapabilities
+                ) {
+
+                    isNetworkAvailable.value =
+                        networkCapabilities.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_INTERNET
+                        ) &&
+                        networkCapabilities.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                        )
+                }
+            }
+
+        cm.registerNetworkCallback(
+            request,
+            networkCallback!!
+        )
+    }
+
+    private fun injectPrefetchScript(
+        webView: WebView?
+    ) {
+
+        val js = """
+            (function() {
+                try {
+                    var links =
+                        document.querySelectorAll('a[href]');
+
+                    var prefetched = 0;
+
+                    var seen = {};
+
+                    for (
+                        var i = 0;
+                        i < links.length &&
+                        prefetched < $MAX_PREFETCH_LINKS;
+                        i++
+                    ) {
+
+                        var href =
+                            links[i].href;
+
+                        if (
+                            href &&
+                            href.indexOf('$SITE_HOST') !== -1 &&
+                            !seen[href]
+                        ) {
+
+                            seen[href] = true;
+
+                            var link =
+                                document.createElement('link');
+
+                            link.rel = 'prefetch';
+
+                            link.href = href;
+
+                            document.head.appendChild(link);
+
+                            prefetched++;
+                        }
+                    }
+
+                } catch(e) {}
+            })();
+        """.trimIndent()
+
+        webView?.evaluateJavascript(
+            js,
+            null
+        )
+    }
+
+    private fun isOnline(): Boolean {
+
+        val cm =
+            getSystemService(
+                CONNECTIVITY_SERVICE
+            ) as ConnectivityManager
+
+        val network =
+            cm.activeNetwork
+                ?: return false
+
+        val capabilities =
+            cm.getNetworkCapabilities(
+                network
+            )
+                ?: return false
+
+        return capabilities.hasCapability(
+            NetworkCapabilities.NET_CAPABILITY_INTERNET
+        ) &&
+        capabilities.hasCapability(
+            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+        )
+    }
+
+    override fun onSaveInstanceState(
+        outState: Bundle
+    ) {
+
+        super.onSaveInstanceState(
+            outState
+        )
+
+        webView?.saveState(
+            outState
+        )
+    }
+
+    override fun onRestoreInstanceState(
+        savedInstanceState: Bundle
+    ) {
+
+        super.onRestoreInstanceState(
+            savedInstanceState
+        )
+
+        webView?.restoreState(
+            savedInstanceState
+        )
     }
 
     override fun onDestroy() {
 
-        try {
-            connectivityManager.unregisterNetworkCallback(networkCallback)
-        } catch (_: Exception) {
+        networkCallback?.let {
+
+            try {
+
+                (
+                    getSystemService(
+                        CONNECTIVITY_SERVICE
+                    ) as ConnectivityManager
+                ).unregisterNetworkCallback(it)
+
+            } catch (_: Exception) {
+            }
         }
 
         webView?.apply {
+
             stopLoading()
+
             loadUrl("about:blank")
+
             clearHistory()
+
             removeAllViews()
+
             destroy()
         }
 
@@ -198,467 +780,297 @@ class MainActivity : ComponentActivity() {
 
         super.onDestroy()
     }
+}
 
-    @Composable
-    private fun CompositionRoot() {
+@Composable
+fun SplashScreen() {
 
-        var showSplash by remember {
-            mutableStateOf(true)
-        }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White),
 
-        var pageLoaded by remember {
-            mutableStateOf(false)
-        }
-
-        var offline by remember {
-            mutableStateOf(!isNetworkAvailable)
-        }
-
-        LaunchedEffect(Unit) {
-            delay(900)
-            showSplash = false
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.White)
-        ) {
-
-            if (!offline) {
-
-                WebViewContainer(
-                    modifier = Modifier.fillMaxSize(),
-                    onPageLoaded = {
-                        pageLoaded = true
-                    },
-                    onNetworkError = {
-                        offline = true
-                    }
-                )
-
-                AnimatedVisibility(
-                    visible = !pageLoaded || showSplash,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    SplashScreen()
-                }
-
-                AnimatedVisibility(
-                    visible = pageLoaded && !showSplash,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    OfflineBanner(
-                        visible = !isNetworkAvailable
-                    )
-                }
-
-            } else {
-
-                OfflineScreen(
-                    onRetry = {
-                        offline = !checkNetwork()
-
-                        if (!offline) {
-                            webView?.reload()
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    @Composable
-    private fun WebViewContainer(
-        modifier: Modifier,
-        onPageLoaded: () -> Unit,
-        onNetworkError: () -> Unit
+        contentAlignment = Alignment.Center
     ) {
 
-        AndroidView(
-            modifier = modifier,
-            factory = { context ->
+        Column(
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
 
-                WebView(context).apply {
-
-                    webView = this
-
-                    settings.apply {
-
-                        javaScriptEnabled = true
-
-                        domStorageEnabled = true
-
-                        databaseEnabled = true
-
-                        allowContentAccess = true
-
-                        allowFileAccess = true
-
-                        allowFileAccessFromFileURLs = false
-
-                        allowUniversalAccessFromFileURLs = false
-
-                        javaScriptCanOpenWindowsAutomatically = false
-
-                        setSupportMultipleWindows(false)
-
-                        builtInZoomControls = false
-
-                        displayZoomControls = false
-
-                        setSupportZoom(false)
-
-                        useWideViewPort = true
-
-                        loadWithOverviewMode = true
-
-                        mixedContentMode =
-                            WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
-                        mediaPlaybackRequiresUserGesture = false
-
-                        cacheMode = WebSettings.LOAD_DEFAULT
-
-                        userAgentString =
-                            "TeshineApp/1.0 " +
-                            WebSettings.getDefaultUserAgent(context)
-                    }
-
-                    isVerticalScrollBarEnabled = false
-                    isHorizontalScrollBarEnabled = false
-
-                    setBackgroundColor(
-                        android.graphics.Color.WHITE
-                    )
-
-                    webViewClient = object : WebViewClient() {
-
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView?,
-                            request: WebResourceRequest?
-                        ): Boolean {
-
-                            val url =
-                                request?.url?.toString()
-                                    ?: return false
-
-                            val host =
-                                request.url?.host?.lowercase()
-                                    ?: ""
-
-                            return if (
-                                host == SITE_HOST ||
-                                host == "www.$SITE_HOST"
-                            ) {
-                                false
-                            } else {
-
-                                try {
-                                    context.startActivity(
-                                        Intent(
-                                            Intent.ACTION_VIEW,
-                                            request.url
-                                        )
-                                    )
-                                } catch (_: Exception) {
-                                }
-
-                                true
-                            }
-                        }
-
-                        override fun onPageStarted(
-                            view: WebView?,
-                            url: String?,
-                            favicon: Bitmap?
-                        ) {
-                            super.onPageStarted(
-                                view,
-                                url,
-                                favicon
-                            )
-                        }
-
-                        override fun onPageFinished(
-                            view: WebView?,
-                            url: String?
-                        ) {
-
-                            super.onPageFinished(
-                                view,
-                                url
-                            )
-
-                            // غیرفعال کردن انتخاب متن
-                            view?.evaluateJavascript(
-                                """
-                                (function() {
-                                    var style = document.createElement('style');
-                                    style.innerHTML = `
-                                        * {
-                                            -webkit-user-select: none !important;
-                                            user-select: none !important;
-                                            -webkit-touch-callout: none !important;
-                                        }
-                                    `;
-                                    document.head.appendChild(style);
-                                })();
-                                """.trimIndent(),
-                                null
-                            )
-
-                            onPageLoaded()
-
-                            prefetchLinks(view)
-                        }
-
-                        override fun onReceivedError(
-                            view: WebView?,
-                            request: WebResourceRequest?,
-                            error: WebResourceError?
-                        ) {
-
-                            super.onReceivedError(
-                                view,
-                                request,
-                                error
-                            )
-
-                            if (
-                                request?.isForMainFrame == true
-                            ) {
-                                onNetworkError()
-                            }
-                        }
-                    }
-
-                    loadUrl(HOME_URL)
-                }
-            },
-            update = {
-                webView = it
-            }
-        )
-    }
-
-    private fun prefetchLinks(view: WebView?) {
-
-        if (view == null) return
-
-        view.evaluateJavascript(
-            """
-            (function() {
-
-                var links = Array.from(
-                    document.querySelectorAll('a[href]')
-                );
-
-                var urls = links
-                    .map(function(a) {
-                        return a.href;
-                    })
-                    .filter(function(href) {
-                        try {
-                            var u = new URL(href);
-
-                            return (
-                                u.hostname === '$SITE_HOST' ||
-                                u.hostname === 'www.$SITE_HOST'
-                            );
-                        } catch(e) {
-                            return false;
-                        }
-                    })
-                    .slice(0, 6);
-
-                return JSON.stringify(urls);
-
-            })();
-            """.trimIndent()
-        ) {
-            // لینک‌ها برای آماده‌سازی اولیه شناسایی شدند
-        }
-    }
-
-    @Composable
-    private fun SplashScreen() {
-
-        CompositionLocalProvider(
-            LocalLayoutDirection provides LayoutDirection.Rtl
+            verticalArrangement =
+                Arrangement.Center
         ) {
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-
-                    Image(
-                        painter = painterResource(
-                            id = R.drawable.logo
-                        ),
-                        contentDescription = "Teshine",
-                        modifier = Modifier.size(150.dp)
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(28.dp)
-                    )
-
-                    CircularProgressIndicator(
-                        color = Color.Black,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(32.dp)
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(16.dp)
-                    )
-
-                    Text(
-                        text = "در حال بارگذاری...",
-                        color = Color.Black,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun OfflineBanner(
-        visible: Boolean
-    ) {
-
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(
-                initialOffsetY = { -it }
-            ) + fadeIn(),
-            exit = slideOutVertically(
-                targetOffsetY = { -it }
-            ) + fadeOut()
-        ) {
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Color(0xFFFF9800)
-                    )
-                    .padding(
-                        vertical = 8.dp,
-                        horizontal = 16.dp
+            Image(
+                painter =
+                    painterResource(
+                        id = R.drawable.logo
                     ),
-                contentAlignment = Alignment.Center
-            ) {
 
-                Text(
-                    text = "اتصال اینترنت برقرار نیست",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = TextAlign.Center
-                )
-            }
+                contentDescription = "لوگو",
+
+                modifier =
+                    Modifier.size(140.dp)
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(32.dp)
+            )
+
+            CircularProgressIndicator(
+                color = Color.Black,
+
+                strokeWidth = 3.dp
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(16.dp)
+            )
+
+            Text(
+                text = "در حال بارگذاری...",
+
+                color = Color.Black,
+
+                fontSize = 14.sp,
+
+                fontWeight =
+                    FontWeight.Medium
+            )
         }
     }
+}
 
-    @Composable
-    private fun OfflineScreen(
-        onRetry: () -> Unit
+@Composable
+fun OfflineScreen(
+    countdown: Int,
+    creamColor: Color,
+    brownColor: Color,
+    onRetry: () -> Unit
+) {
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(creamColor),
+
+        contentAlignment =
+            Alignment.Center
     ) {
 
-        CompositionLocalProvider(
-            LocalLayoutDirection provides LayoutDirection.Rtl
+        Column(
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
+
+            verticalArrangement =
+                Arrangement.Center,
+
+            modifier =
+                Modifier.padding(32.dp)
         ) {
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(creamColor)
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
+            Image(
+                painter =
+                    painterResource(
+                        id = R.drawable.logo
+                    ),
+
+                contentDescription = "لوگو",
+
+                modifier =
+                    Modifier.size(100.dp)
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(28.dp)
+            )
+
+            Surface(
+                shape =
+                    RoundedCornerShape(50),
+
+                color =
+                    Color(0xFFEFE0D0),
+
+                modifier =
+                    Modifier.size(80.dp)
             ) {
 
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                Box(
+                    contentAlignment =
+                        Alignment.Center
                 ) {
-
-                    Image(
-                        painter = painterResource(
-                            id = R.drawable.logo
-                        ),
-                        contentDescription = "Teshine",
-                        modifier = Modifier.size(130.dp)
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(24.dp)
-                    )
 
                     Text(
                         text = "📡",
-                        fontSize = 48.sp
+
+                        fontSize = 36.sp
                     )
-
-                    Spacer(
-                        modifier = Modifier.height(16.dp)
-                    )
-
-                    Text(
-                        text = "اتصال به اینترنت برقرار نیست",
-                        color = brownColor,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(10.dp)
-                    )
-
-                    Text(
-                        text = "لطفاً اتصال اینترنت خود را بررسی کنید و دوباره تلاش کنید.",
-                        color = brownColor,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(24.dp)
-                    )
-
-                    Button(
-                        onClick = onRetry,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = greenColor,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-
-                        Text(
-                            text = "تلاش مجدد",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
             }
+
+            Spacer(
+                modifier =
+                    Modifier.height(20.dp)
+            )
+
+            Text(
+                text = "خطای شبکه",
+
+                style =
+                    MaterialTheme.typography.titleLarge,
+
+                fontWeight =
+                    FontWeight.Bold,
+
+                color =
+                    Color(0xFF4E342E),
+
+                textAlign =
+                    TextAlign.Center
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(8.dp)
+            )
+
+            Text(
+                text =
+                    "اتصال اینترنت برقرار نیست.\nلطفاً وای‌فای یا داده موبایل را بررسی کنید.",
+
+                style =
+                    MaterialTheme.typography.bodyMedium,
+
+                color =
+                    Color(0xFF795548),
+
+                textAlign =
+                    TextAlign.Center,
+
+                lineHeight =
+                    22.sp
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(28.dp)
+            )
+
+            Button(
+                onClick = onRetry,
+
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor =
+                            brownColor
+                    ),
+
+                shape =
+                    RoundedCornerShape(12.dp),
+
+                modifier =
+                    Modifier
+                        .fillMaxWidth(0.65f)
+                        .height(50.dp)
+            ) {
+
+                Text(
+                    text = "تلاش مجدد",
+
+                    color = Color.White,
+
+                    fontWeight =
+                        FontWeight.Bold,
+
+                    fontSize = 16.sp
+                )
+            }
+
+            Spacer(
+                modifier =
+                    Modifier.height(14.dp)
+            )
+
+            Text(
+                text =
+                    "تلاش خودکار تا $countdown ثانیه دیگر",
+
+                style =
+                    MaterialTheme.typography.bodySmall,
+
+                color =
+                    Color(0xFFBCAAA4),
+
+                textAlign =
+                    TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+fun OfflineBanner() {
+
+    Surface(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = 8.dp
+                ),
+
+        shape =
+            RoundedCornerShape(12.dp),
+
+        color =
+            Color(0xFFEF6C00),
+
+        shadowElevation =
+            4.dp
+    ) {
+
+        Row(
+            modifier =
+                Modifier.padding(
+                    horizontal = 16.dp,
+                    vertical = 12.dp
+                ),
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Text(
+                text = "⚠️",
+
+                fontSize = 18.sp
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.width(10.dp)
+            )
+
+            Text(
+                text =
+                    "اتصال اینترنت را بررسی کنید. محتوا از حافظه نمایش داده می‌شود.",
+
+                color =
+                    Color.White,
+
+                fontSize = 13.sp,
+
+                fontWeight =
+                    FontWeight.Medium,
+
+                lineHeight =
+                    18.sp
+            )
         }
     }
 }
