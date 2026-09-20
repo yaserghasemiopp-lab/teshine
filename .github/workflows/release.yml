@@ -26,6 +26,23 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > teshine-release.jks
 
+      - name: Verify keystore
+        env:
+          STORE_PASSWORD: ${{ secrets.TESHINE_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.TESHINE_KEY_PASSWORD }}
+        run: |
+          keytool -list \
+            -keystore teshine-release.jks \
+            -storepass "$STORE_PASSWORD" \
+            -alias teshine
+
+          keytool -keypasswd \
+            -keystore teshine-release.jks \
+            -storepass "$STORE_PASSWORD" \
+            -alias teshine \
+            -keypass "$KEY_PASSWORD" \
+            -new "$KEY_PASSWORD"
+
       - name: Build Release APK
         env:
           TESHINE_KEYSTORE_PATH: ${{ github.workspace }}/teshine-release.jks
@@ -35,6 +52,7 @@ jobs:
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload Release APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Teshine-release
